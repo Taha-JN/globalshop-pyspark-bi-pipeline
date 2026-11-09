@@ -1,0 +1,13 @@
+ETL Flow (textual / mermaid-style)
+
+```mermaid
+flowchart TD
+  A[Raw CSVs in data/] --> B[Extract]
+  B --> C[Clean: cast types, remove nulls, fix timestamps]
+  C --> D[Deduplicate & Enrich: TotalPrice, OrderMonth, Channel]
+  D --> E[Write Parquet to etl/output/]
+  E --> F[Load into Data Warehouse (SQL), create star schema]
+  F --> G[Analysis & Dashboards]
+```
+
+Metrics logged: initial_row_count, after_cleaning, after_dedup, null_customer_count, records_with_negative_quantity

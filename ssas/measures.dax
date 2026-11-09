@@ -1,0 +1,12 @@
+// measures.dax
+// Paste these into a Tabular model or Power BI measures
+
+Total Sales = SUM(FactSales[TotalPrice])
+
+AvgOrderValue = DIVIDE([Total Sales], DISTINCTCOUNT(FactSales[InvoiceNo]))
+
+ProfitMargin = DIVIDE([Total Sales] - SUM(FactSales[UnitPrice] * FactSales[Quantity] * 0.6), [Total Sales])
+
+ConversionRate = DIVIDE(CALCULATE(COUNTROWS(FactSales), FactSales[Channel] = "web"), CALCULATE(COUNTROWS('retailrocket_events'), 'retailrocket_events'[event_type] = "view"))
+
+ReturningCustomerRate = DIVIDE(CALCULATE(DISTINCTCOUNT(FactSales[CustomerKey]), FILTER(ALL(FactSales), FactSales[CustomerKey] IN VALUES(FactSales[CustomerKey]) AND CALCULATE(COUNTROWS(FactSales)) > 1)), DISTINCTCOUNT(FactSales[CustomerKey]))
