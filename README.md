@@ -42,22 +42,22 @@ flowchart LR
 
 * **Data Sources**:
   * `online_retail_ii.csv`: Primary e-commerce transactions (invoices, line-items, quantities, unit prices).
-  * `olist_orders.csv`: Regional South American orders, payments, and fulfillment status.
+  * `olist_orders.csv`: Regional South American orders, payments, and fulfillment status. Cleansed and staged as an independent auxiliary dataset (`orders_clean.parquet`) for logistics profiling, intentionally decoupled from the core retail `FactSales` transaction grain.
   * `retailrocket_events.csv`: Behavioral clickstream events (views, add-to-cart, transactions).
 * **Decoupled ETL Processing**:
   * **Modular Architecture**: Clean separation into `etl/config.py`, `etl/schemas.py`, `etl/engines/`, and `etl/main.py`.
-  * **Dual Engine**: Distributed Apache Spark (`local[*]` or cluster mode) with automatic fallback to high-performance vectorized Pandas/PyArrow.
-  * **Distributed-Safe Surrogate Keys**: Cryptographic SHA256 surrogate keys (`SalesKey`, `FunnelKey`) completely eliminate single-partition `Window.orderBy` cluster bottlenecks.
+  * **Dual Engine Parity**: Distributed Apache Spark (`local[*]` or cluster mode) with automatic fallback to high-performance vectorized Pandas/PyArrow.
+  * **Distributed-Safe Surrogate Keys**: Deterministic 64-bit SHA-256 surrogate keys (`ProductKey`, `CustomerKey`, `RegionKey`, `SalesKey`, `FunnelKey`) completely eliminate single-partition `Window.orderBy` cluster bottlenecks and eliminate 32-bit `CRC32` hash collision risks across both Spark and Pandas engines.
   * **Data Quality**: Filters invalid negative quantities (returns), drops zero-unit prices, imputes missing customer identities to `'GUEST'`, and deduplicates line items.
 * **Analytical Modeling (Kimball Star Schema)**:
-  * `FactSales`: Transaction grain with surrogate keys (`ProductKey`, `CustomerKey`, `DateKey`, `RegionKey`), `InvoiceTimestamp`, and partitioned by `(Year, Month)`.
+  * `FactSales`: Transaction grain with surrogate keys (`ProductKey`, `CustomerKey`, `DateKey`, `RegionKey`), `InvoiceTimestamp`, and partitioned by `(Year, Month)` (monolithic duplicate exports eliminated for zero redundant I/O).
   * `FactFunnel`: Behavioral clickstream funnel grain (`VisitorID`, `StockCode`, `ProductKey`, `Views`, `AddToCart`, `Transactions`, `Converted`).
   * `DimProduct`: Product catalog with surrogate `ProductKey`, `StockCode`, `Description`, and `UnitPrice`.
   * `DimCustomer`: Customer dimension with surrogate `CustomerKey`, `CustomerID`, `Country`, and foreign key `RegionKey`.
   * `DimDate`: Comprehensive date dimension with integer `DateKey` (`YYYYMMDD`), `Year`, `Month`, `Day`, `DayOfWeek`, and `Quarter`.
   * `DimRegion`: Country dimension with surrogate `RegionKey` joined to `FactSales` and `DimCustomer`.
 * **DuckDB In-Memory OLAP Querying**:
-  * Direct execution of production `.sql` scripts against the Parquet Lakehouse without intermediate in-memory flattening.
+  * Direct execution of production `.sql` scripts against the Parquet Lakehouse using DuckDB's `hive_partitioning=true` without intermediate in-memory flattening.
   * Continuous time-series reindexing to guarantee robust Year-over-Year (YoY) metrics.
 
 ---

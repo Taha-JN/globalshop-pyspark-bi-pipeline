@@ -16,6 +16,7 @@ from etl.engines.pandas_engine import (
     build_star_schema_pandas,
     clean_online_retail_pandas,
 )
+from etl.engines.spark_engine import SparkETLEngine, is_spark_runnable
 from etl.schemas import (
     DIM_CUSTOMER_COLUMNS,
     DIM_DATE_COLUMNS,
@@ -65,6 +66,22 @@ def sample_events_df():
         "event_type": ["view", "addtocart", "transaction", "view", "view"],
         "transactionid": ["INV1001", "", "INV1001", "", ""],
     })
+
+
+@pytest.fixture(scope="session")
+def spark_session():
+    """Instantiate a local SparkSession if JVM is compatible, otherwise skip gracefully."""
+    if not is_spark_runnable():
+        pytest.skip("Local JVM is incompatible with PySpark (Java 17+ required for PySpark 4.x)")
+    from pyspark.sql import SparkSession
+    spark = (
+        SparkSession.builder.master("local[1]")
+        .appName("GlobalShop_UnitTests")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .getOrCreate()
+    )
+    yield spark
+    spark.stop()
 
 
 def test_negative_and_zero_quantity_removal(sample_raw_retail_df):
@@ -163,27 +180,27 @@ def test_fact_funnel_generation(sample_raw_retail_df, sample_events_df):
 
 
 def test_duckdb_olap_query_execution(tmp_path, sample_raw_retail_df, sample_events_df):
-    """Validate that DuckDB executes relational queries on generated Parquet tables."""
+    """Validate that DuckDB executes relational queries on partitioned Parquet tables with hive_partitioning=true."""
     cleaned, _ = clean_online_retail_pandas(sample_raw_retail_df)
     star_schema = build_star_schema_pandas(cleaned, events_df=sample_events_df)
 
-    # Persist mock Parquet tables
-    fact_p = tmp_path / "fact_sales.parquet"
+    # Persist mock Parquet tables (Partitioned FactSales)
+    fact_dir = tmp_path / "fact_sales"
     prod_p = tmp_path / "dim_product.parquet"
     cust_p = tmp_path / "dim_customer.parquet"
     reg_p = tmp_path / "dim_region.parquet"
 
-    star_schema["FactSales"].to_parquet(fact_p, index=False)
+    star_schema["FactSales"].to_parquet(fact_dir, partition_cols=["Year", "Month"], index=False)
     star_schema["DimProduct"].to_parquet(prod_p, index=False)
     star_schema["DimCustomer"].to_parquet(cust_p, index=False)
     star_schema["DimRegion"].to_parquet(reg_p, index=False)
 
-    fact_str = fact_p.as_posix()
+    fact_glob = (fact_dir / "**" / "*.parquet").as_posix()
     prod_str = prod_p.as_posix()
     reg_str = reg_p.as_posix()
 
     con = duckdb.connect()
-    con.execute(f"CREATE VIEW FactSales AS SELECT * FROM read_parquet('{fact_str}')")
+    con.execute(f"CREATE VIEW FactSales AS SELECT * FROM read_parquet('{fact_glob}', hive_partitioning=true)")
     con.execute(f"CREATE VIEW DimProduct AS SELECT * FROM read_parquet('{prod_str}')")
     con.execute(f"CREATE VIEW DimRegion AS SELECT * FROM read_parquet('{reg_str}')")
 
@@ -263,4 +280,38 @@ def test_guest_region_mapping_decoupled():
             f"Data corruption detected: Invoice {inv} originated in {expected_country} "
             f"but was incorrectly attributed to {row['Country']} in DimRegion!"
         )
+
+
+def test_spark_engine_parity(tmp_path, sample_raw_retail_df, spark_session):
+    """
+    Validate SparkETLEngine execution parity, distributed SHA-256 surrogate key derivation,
+    and partitioned FactSales Lakehouse generation.
+    """
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    sample_raw_retail_df.to_csv(input_dir / "sample_1k_online_retail.csv", index=False)
+
+    engine = SparkETLEngine(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        spark_master="local[1]",
+    )
+    engine.spark = spark_session
+
+    summary = engine.run()
+
+    # Assert FactSales partitioned lakehouse exists and has records
+    fact_sales_dir = output_dir / "fact_sales"
+    assert fact_sales_dir.exists(), "Partitioned FactSales directory must exist"
+    partition_files = list(fact_sales_dir.glob("**/*.parquet"))
+    assert len(partition_files) > 0, "FactSales must contain partitioned parquet files"
+
+    # Assert dimension tables exist
+    assert summary["fact_sales_records"] > 0
+    assert (output_dir / "dim_product.parquet").exists()
+    assert (output_dir / "dim_customer.parquet").exists()
+    assert (output_dir / "dim_region.parquet").exists()
+    assert (output_dir / "dim_date.parquet").exists()
+
 

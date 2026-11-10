@@ -123,16 +123,16 @@ def build_fact_funnel_pandas(
     merged = pivot_df.merge(
         dim_product[["StockCode", "ProductKey"]], on="StockCode", how="left"
     )
-    merged["ProductKey"] = merged["ProductKey"].fillna(-1).astype(int)
+    merged["ProductKey"] = merged["ProductKey"].fillna(-1).astype(np.int64)
 
     # Conversion flag
     merged["Converted"] = merged["Transactions"] > 0
 
-    # Deterministic distributed-safe surrogate key
-    merged["FunnelKey"] = [
-        hashlib.sha256(f"{v}_{s}".encode("utf-8")).hexdigest()[:16]
-        for v, s in zip(merged["VisitorID"], merged["StockCode"])
-    ]
+    # Deterministic distributed-safe surrogate key (vectorized mapping)
+    composite_funnel = merged["VisitorID"].astype(str) + "_" + merged["StockCode"].astype(str)
+    merged["FunnelKey"] = composite_funnel.map(
+        lambda x: hashlib.sha256(x.encode("utf-8")).hexdigest()[:16]
+    )
 
     return merged[FACT_FUNNEL_COLUMNS]
 
@@ -151,7 +151,7 @@ def build_star_schema_pandas(
     - FactSales (SalesKey PK, ProductKey, CustomerKey, DateKey, RegionKey, measures)
     - FactFunnel (FunnelKey PK, VisitorID, StockCode, ProductKey, funnel metrics)
     """
-    # 1. DimRegion
+    # 1. DimRegion (Distributed-Safe 64-bit SHA-256 Surrogate Key matching Spark Engine)
     unique_countries = sorted(cleaned_sales["Country"].dropna().unique().tolist())
     if orders_df is not None and "state" in orders_df.columns:
         if "Brazil" not in unique_countries:
@@ -159,24 +159,36 @@ def build_star_schema_pandas(
         unique_countries = sorted(unique_countries)
 
     dim_region = pd.DataFrame({"Country": unique_countries})
-    dim_region["RegionKey"] = dim_region.index + 1
+    dim_region["RegionKey"] = (
+        dim_region["Country"]
+        .map(lambda x: int(hashlib.sha256(str(x).encode("utf-8")).hexdigest()[:15], 16))
+        .astype(np.int64)
+    )
     dim_region = dim_region[DIM_REGION_COLUMNS]
 
-    # 2. DimProduct
+    # 2. DimProduct (Distributed-Safe 64-bit SHA-256 Surrogate Key matching Spark Engine)
     dim_product = cleaned_sales[["StockCode", "Description"]].drop_duplicates(subset=["StockCode"]).copy()
     dim_product = dim_product.sort_values("StockCode").reset_index(drop=True)
-    dim_product["ProductKey"] = dim_product.index + 1
+    dim_product["ProductKey"] = (
+        dim_product["StockCode"]
+        .map(lambda x: int(hashlib.sha256(str(x).encode("utf-8")).hexdigest()[:15], 16))
+        .astype(np.int64)
+    )
     avg_price = cleaned_sales.groupby("StockCode")["UnitPrice"].mean().reset_index()
     dim_product = dim_product.merge(avg_price, on="StockCode", how="left")
     dim_product["UnitPrice"] = np.round(dim_product["UnitPrice"], 4)
     dim_product = dim_product[DIM_PRODUCT_COLUMNS]
 
-    # 3. DimCustomer (Enforce referential integrity to DimRegion)
+    # 3. DimCustomer (Enforce referential integrity to DimRegion - Matching Spark Engine)
     dim_customer = cleaned_sales[["CustomerID", "Country"]].drop_duplicates(subset=["CustomerID"]).copy()
     dim_customer = dim_customer.sort_values("CustomerID").reset_index(drop=True)
-    dim_customer["CustomerKey"] = dim_customer.index + 1
+    dim_customer["CustomerKey"] = (
+        dim_customer["CustomerID"]
+        .map(lambda x: int(hashlib.sha256(str(x).encode("utf-8")).hexdigest()[:15], 16))
+        .astype(np.int64)
+    )
     dim_customer = dim_customer.merge(dim_region, on="Country", how="left")
-    dim_customer["RegionKey"] = dim_customer["RegionKey"].fillna(-1).astype(int)
+    dim_customer["RegionKey"] = dim_customer["RegionKey"].fillna(-1).astype(np.int64)
     dim_customer = dim_customer[DIM_CUSTOMER_COLUMNS]
 
     # 4. DimDate
@@ -207,17 +219,22 @@ def build_star_schema_pandas(
             dim_region[["Country", "RegionKey"]], on="Country", how="left"
         )
     )
-    fact_sales["RegionKey"] = fact_sales["RegionKey"].fillna(-1).astype(int)
+    fact_sales["RegionKey"] = fact_sales["RegionKey"].fillna(-1).astype(np.int64)
+    fact_sales["ProductKey"] = fact_sales["ProductKey"].fillna(-1).astype(np.int64)
+    fact_sales["CustomerKey"] = fact_sales["CustomerKey"].fillna(-1).astype(np.int64)
     fact_sales["DateKey"] = pd.to_datetime(fact_sales["Date"]).dt.strftime("%Y%m%d").astype(int)
 
-    # Distributed-safe deterministic surrogate SalesKey (SHA256)
-    timestamps = fact_sales["InvoiceTimestamp"].astype(str)
-    inv_nos = fact_sales["InvoiceNo"].astype(str)
-    stocks = fact_sales["StockCode"].astype(str)
-    fact_sales["SalesKey"] = [
-        hashlib.sha256(f"{inv}_{stk}_{ts}".encode("utf-8")).hexdigest()[:16]
-        for inv, stk, ts in zip(inv_nos, stocks, timestamps)
-    ]
+    # Distributed-safe deterministic surrogate SalesKey (SHA256 vectorized mapping)
+    sales_composite = (
+        fact_sales["InvoiceNo"].astype(str)
+        + "_"
+        + fact_sales["StockCode"].astype(str)
+        + "_"
+        + fact_sales["InvoiceTimestamp"].astype(str)
+    )
+    fact_sales["SalesKey"] = sales_composite.map(
+        lambda x: hashlib.sha256(x.encode("utf-8")).hexdigest()[:16]
+    )
 
     fact_sales = fact_sales.sort_values("InvoiceTimestamp").reset_index(drop=True)
     fact_sales = fact_sales[FACT_SALES_COLUMNS]
@@ -298,7 +315,7 @@ class PandasETLEngine(BaseETLEngine):
         fact_sales = star_schema.fact_sales
         fact_funnel = star_schema.fact_funnel
 
-        # Persist FactSales (Partitioned Lakehouse & Flat) using Atomic Directory Swap
+        # Persist FactSales (Partitioned Lakehouse only) using Atomic Directory Swap
         fact_out = self.output_dir / "fact_sales"
         staging_out = self.output_dir / ".staging_fact_sales"
         backup_out = self.output_dir / ".backup_fact_sales"
@@ -308,7 +325,6 @@ class PandasETLEngine(BaseETLEngine):
         staging_out.mkdir(parents=True, exist_ok=True)
 
         logger.info("Persisting FactSales partitioned by (Year, Month) via atomic staging to %s", fact_out)
-        fact_sales.to_parquet(self.output_dir / "fact_sales.parquet", index=False)
         fact_sales.to_parquet(staging_out, partition_cols=["Year", "Month"], index=False)
 
         # Atomic directory swap: guarantees zero data loss if process crashes mid-write

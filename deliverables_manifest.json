@@ -1,6 +1,6 @@
 {
-  "manifest_generated_at": "2026-11-10T11:47:27.730717+00:00",
-  "files_count": 40,
+  "manifest_generated_at": "2026-11-10T12:17:07.534326+00:00",
+  "files_count": 41,
   "files": [
     {
       "path": ".env.example",
@@ -14,8 +14,8 @@
     },
     {
       "path": "analysis/analysis.py",
-      "sha256": "15f07d316ac10602e59e89bbf703056492e64f376a8831d14b561ade6a30a83d",
-      "size_bytes": 13575
+      "sha256": "f2be30f4c3cb5a17d97bbb8cf43a7ab50873a10e83b0fd443b2d9625c9a2e95d",
+      "size_bytes": 13343
     },
     {
       "path": "data/generate_synthetic_data.py",
@@ -64,13 +64,13 @@
     },
     {
       "path": "etl/engines/pandas_engine.py",
-      "sha256": "2f3ddd0cfe5f097f744aacb40ba0a739fb7cc51792406d2d87913951b263d55e",
-      "size_bytes": 15455
+      "sha256": "78bba182811905cbee51b1f3cebf504892311854789139a830b0f199faa66876",
+      "size_bytes": 16202
     },
     {
       "path": "etl/engines/spark_engine.py",
-      "sha256": "a05d728ae993ffd916d7bce2e108f9792a6b1d9a19e825e0d4a701b9a738df64",
-      "size_bytes": 13048
+      "sha256": "b298570ed6f4225622c045afe730396b06e44e8838e650dbe83a731a3a024a1c",
+      "size_bytes": 14285
     },
     {
       "path": "etl/etl_flow_diagram.txt",
@@ -104,8 +104,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "f7466b85e600db98cd4dfe7fc60aaff5c542916d1620b30f539361b1347d9526",
-      "size_bytes": 8740
+      "sha256": "663ac36250a1db6da30f6e7e6703611fec030ccac486a285583f74b13447aba3",
+      "size_bytes": 9171
     },
     {
       "path": "report/Big_Data_Analytics_Project_Report.docx",
@@ -114,8 +114,8 @@
     },
     {
       "path": "report/Big_Data_Project_Demo_Report.txt",
-      "sha256": "c88da5a3f5f31e02abf4afc3d06f5e20d1c620223823e8f55c7445cdca3d4c95",
-      "size_bytes": 17138
+      "sha256": "a9528a6526afeebea0a362796576ef75cbc7e19c88f2425852b9074f19e75634",
+      "size_bytes": 17664
     },
     {
       "path": "requirements.txt",
@@ -194,13 +194,18 @@
     },
     {
       "path": "tests/test_etl.py",
-      "sha256": "2d60113816b71d5beb6ff228ff3727149e82caad141efb6544282deed3f6f93e",
-      "size_bytes": 10924
+      "sha256": "916f27938c6eac081160d3a02ab0f198683d97dd7e2b9d46c95bf9e6f81ec6a6",
+      "size_bytes": 12978
     },
     {
       "path": "tools/generate_manifest.py",
       "sha256": "80d10ad851844618e95b1394cbd3ad3e82797470f3febf1bb7379c731cb0a37e",
       "size_bytes": 1921
+    },
+    {
+      "path": "\u0628\u0631\u0627\u06cc \u0645\u0639\u0631\u0641\u06cc \u0627\u06cc\u0646 \u067e\u0631\u0648\u0698\u0647 \u0628\u0647 \u0635\u0648\u0631\u062a \u062c\u0632\u0626\u06cc.txt",
+      "sha256": "24b0cfd857e6b225c591923349952617c0e7713ffdd7094683f7b36651283ce6",
+      "size_bytes": 1088
     }
   ]
 }

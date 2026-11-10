@@ -47,22 +47,18 @@ def initialize_duckdb_lakehouse(input_dir: Path) -> duckdb.DuckDBPyConnection:
     """
     con = duckdb.connect(database=":memory:")
 
-    fact_sales_path = input_dir / "fact_sales.parquet"
     partitioned_dir = input_dir / "fact_sales"
 
-    # Prioritize partitioned lakehouse directory if present
+    # Enforce lakehouse architecture: read exclusively from partitioned directory with hive_partitioning=true
     if partitioned_dir.exists() and any(partitioned_dir.glob("**/*.parquet")):
-        # Read partitioned lakehouse with glob pattern
         glob_path = str(partitioned_dir / "**" / "*.parquet").replace("\\", "/")
-        con.execute(f"CREATE OR REPLACE VIEW FactSales AS SELECT * FROM read_parquet('{glob_path}')")
-        logger.info("Registered FactSales view from partitioned lakehouse: %s", glob_path)
-    elif fact_sales_path.exists():
-        p = str(fact_sales_path).replace("\\", "/")
-        con.execute(f"CREATE OR REPLACE VIEW FactSales AS SELECT * FROM read_parquet('{p}')")
-        logger.info("Registered FactSales view from monolithic parquet: %s", p)
+        con.execute(
+            f"CREATE OR REPLACE VIEW FactSales AS SELECT * FROM read_parquet('{glob_path}', hive_partitioning=true)"
+        )
+        logger.info("Registered FactSales view from partitioned lakehouse (hive_partitioning=true): %s", glob_path)
     else:
         raise FileNotFoundError(
-            f"FactSales parquet files not found in {input_dir}. Please run etl/main.py first."
+            f"Partitioned FactSales lakehouse directory not found in {input_dir}. Please run etl/main.py first."
         )
 
     # Register Dimension views

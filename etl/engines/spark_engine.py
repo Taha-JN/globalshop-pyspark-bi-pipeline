@@ -21,6 +21,7 @@ from etl.schemas import (
     FACT_FUNNEL_COLUMNS,
     FACT_SALES_COLUMNS,
     StarSchemaContainer,
+    UNKNOWN_CUSTOMER_ID,
 )
 
 logger = logging.getLogger("GlobalShop_ETL")
@@ -129,7 +130,14 @@ class SparkETLEngine(BaseETLEngine):
             .withColumn("Year", F.year(F.col("InvoiceTimestamp")))
             .withColumn("Month", F.month(F.col("InvoiceTimestamp")))
             .withColumn("Date", F.to_date(F.col("InvoiceTimestamp")))
-            .withColumn("CustomerID", F.coalesce(F.col("CustomerID"), F.lit("GUEST")))
+            .withColumn(
+                "CustomerID",
+                F.when(
+                    F.col("CustomerID").isNull()
+                    | F.trim(F.col("CustomerID")).isin("", "nan", "None", "null"),
+                    F.lit(UNKNOWN_CUSTOMER_ID),
+                ).otherwise(F.trim(F.col("CustomerID"))),
+            )
             .withColumn(
                 "Channel",
                 F.when(F.col("Country") == "United Kingdom", F.lit("web")).otherwise(F.lit("marketplace")),
@@ -139,29 +147,38 @@ class SparkETLEngine(BaseETLEngine):
 
         clean_count = online.count()
 
-        # 2. DimRegion (Deduplicated country mappings - Distributed CRC32 BigInt Surrogate Key)
+        # 2. DimRegion (Deduplicated country mappings - Distributed 64-bit SHA-256 Surrogate Key)
         dim_region = (
             online.select("Country")
             .distinct()
-            .withColumn("RegionKey", F.crc32(F.col("Country")).cast(LongType()))
+            .withColumn(
+                "RegionKey",
+                F.conv(F.substring(F.sha2(F.col("Country"), 256), 1, 15), 16, 10).cast(LongType()),
+            )
             .select(DIM_REGION_COLUMNS)
         ).persist()
 
-        # 3. DimProduct (Preserve UnitPrice schema parity - Distributed CRC32 BigInt Surrogate Key)
+        # 3. DimProduct (Preserve UnitPrice schema parity - Distributed 64-bit SHA-256 Surrogate Key)
         dim_product = (
             online.groupBy("StockCode", "Description")
             .agg(F.round(F.mean("UnitPrice"), 4).alias("UnitPrice"))
             .dropDuplicates(["StockCode"])
-            .withColumn("ProductKey", F.crc32(F.col("StockCode")).cast(LongType()))
+            .withColumn(
+                "ProductKey",
+                F.conv(F.substring(F.sha2(F.col("StockCode"), 256), 1, 15), 16, 10).cast(LongType()),
+            )
             .select(DIM_PRODUCT_COLUMNS)
         ).persist()
 
-        # 4. DimCustomer (Enforce referential integrity to DimRegion - Distributed CRC32 BigInt Surrogate Key)
+        # 4. DimCustomer (Enforce referential integrity to DimRegion - Distributed 64-bit SHA-256 Surrogate Key)
         dim_customer = (
             online.select("CustomerID", "Country")
             .dropDuplicates(["CustomerID"])
             .join(dim_region.select("Country", "RegionKey"), on="Country", how="left")
-            .withColumn("CustomerKey", F.crc32(F.col("CustomerID")).cast(LongType()))
+            .withColumn(
+                "CustomerKey",
+                F.conv(F.substring(F.sha2(F.col("CustomerID"), 256), 1, 15), 16, 10).cast(LongType()),
+            )
             .select(DIM_CUSTOMER_COLUMNS)
         ).persist()
 
@@ -268,54 +285,68 @@ class SparkETLEngine(BaseETLEngine):
         dim_region = star_schema.dim_region
         online = star_schema.cleaned_sales
 
-        # Persist FactSales (Partitioned by Year, Month and monolithic)
-        fact_sales.write.partitionBy("Year", "Month").mode("overwrite").parquet(
-            str(output_dir / "fact_sales")
-        )
-        fact_sales.write.mode("overwrite").parquet(str(output_dir / "fact_sales.parquet"))
-
-        # Persist Dimensions
-        dim_product.write.mode("overwrite").parquet(str(output_dir / "dim_product.parquet"))
-        dim_customer.write.mode("overwrite").parquet(str(output_dir / "dim_customer.parquet"))
-        dim_date.write.mode("overwrite").parquet(str(output_dir / "dim_date.parquet"))
-        dim_region.write.mode("overwrite").parquet(str(output_dir / "dim_region.parquet"))
-        if online is not None:
-            online.write.mode("overwrite").parquet(str(output_dir / "online_retail_clean.parquet"))
-
-        # Persist FactFunnel
-        funnel_count = 0
-        if fact_funnel is not None:
-            fact_funnel.write.mode("overwrite").parquet(str(output_dir / "fact_funnel.parquet"))
-            funnel_count = fact_funnel.count()
-
-        # Clean auxiliary datasets
-        if star_schema.orders_clean is not None:
-            star_schema.orders_clean.write.mode("overwrite").parquet(
-                str(output_dir / "orders_clean.parquet")
-            )
-        if star_schema.events_clean is not None:
-            star_schema.events_clean.write.mode("overwrite").parquet(
-                str(output_dir / "events_clean.parquet")
+        try:
+            # Persist FactSales (Partitioned by Year, Month only - eliminating redundant monolithic export)
+            fact_sales.write.partitionBy("Year", "Month").mode("overwrite").parquet(
+                str(output_dir / "fact_sales")
             )
 
-        raw_count = star_schema.clean_metrics.get("raw_records", 0)
-        clean_count = star_schema.clean_metrics.get("clean_records", 0)
-        summary = {
-            "pipeline_completed_at": datetime.now(timezone.utc).isoformat(),
-            "engine": "pyspark",
-            "raw_records": raw_count,
-            "fact_sales_records": clean_count,
-            "fact_funnel_records": funnel_count,
-            "retention_rate_pct": round(
-                (clean_count / max(1, raw_count)) * 100, 2
-            ),
-        }
+            # Persist Dimensions
+            dim_product.write.mode("overwrite").parquet(str(output_dir / "dim_product.parquet"))
+            dim_customer.write.mode("overwrite").parquet(str(output_dir / "dim_customer.parquet"))
+            dim_date.write.mode("overwrite").parquet(str(output_dir / "dim_date.parquet"))
+            dim_region.write.mode("overwrite").parquet(str(output_dir / "dim_region.parquet"))
+            if online is not None:
+                online.write.mode("overwrite").parquet(str(output_dir / "online_retail_clean.parquet"))
 
-        with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+            # Persist FactFunnel
+            funnel_count = 0
+            if fact_funnel is not None:
+                fact_funnel.write.mode("overwrite").parquet(str(output_dir / "fact_funnel.parquet"))
+                funnel_count = fact_funnel.count()
 
-        logger.info("Distributed Spark pipeline successfully executed. Retention: %.2f%%", summary["retention_rate_pct"])
-        return summary
+            # Clean auxiliary datasets
+            if star_schema.orders_clean is not None:
+                star_schema.orders_clean.write.mode("overwrite").parquet(
+                    str(output_dir / "orders_clean.parquet")
+                )
+            if star_schema.events_clean is not None:
+                star_schema.events_clean.write.mode("overwrite").parquet(
+                    str(output_dir / "events_clean.parquet")
+                )
+
+            raw_count = star_schema.clean_metrics.get("raw_records", 0)
+            clean_count = star_schema.clean_metrics.get("clean_records", 0)
+            summary = {
+                "pipeline_completed_at": datetime.now(timezone.utc).isoformat(),
+                "engine": "pyspark",
+                "raw_records": raw_count,
+                "fact_sales_records": clean_count,
+                "fact_funnel_records": funnel_count,
+                "retention_rate_pct": round(
+                    (clean_count / max(1, raw_count)) * 100, 2
+                ),
+            }
+
+            with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
+                json.dump(summary, f, indent=2)
+
+            logger.info("Distributed Spark pipeline successfully executed. Retention: %.2f%%", summary["retention_rate_pct"])
+            return summary
+        finally:
+            logger.info("Releasing cached Spark DataFrames to prevent executor memory leaks...")
+            cached_dfs = [
+                star_schema.cleaned_sales,
+                star_schema.dim_region,
+                star_schema.dim_product,
+                star_schema.dim_customer,
+            ]
+            for df in cached_dfs:
+                if df is not None:
+                    try:
+                        df.unpersist()
+                    except Exception as ex:
+                        logger.warning("Error unpersisting Spark DataFrame: %s", ex)
 
     def run(self) -> Dict[str, Any]:
         try:

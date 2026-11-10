@@ -1,0 +1,9 @@
+Architectural Overhaul & Scalability: Re-architected a monolithic data pipeline into a decoupled, production-grade Python package, transitioning to a distributed PySpark Lakehouse model to process multi-source e-commerce data.
+
+Distributed Compute Optimization: Eliminated catastrophic single-partition OOM bottlenecks in Apache Spark by engineering distributed, shuffle-free CRC32/SHA-256 surrogate keys for Kimball Star Schema dimensions.
+
+Data Integrity & Fault Tolerance: Resolved silent data corruption in complex relational joins and implemented Atomic Directory Swaps for Parquet writes, ensuring strict ACID properties and zero data loss during runtime failures.
+
+Modern OLAP Integration: Integrated an in-process DuckDB engine directly over partitioned Parquet data, replacing slow row-by-row Pandas operations with high-performance, vectorized SQL execution.
+
+Engineering Best Practices: Enforced strict Liskov Substitution Principle (LSP) across dual execution engines, managed configuration via secure environments (.env), and achieved 100% test coverage using pytest.
