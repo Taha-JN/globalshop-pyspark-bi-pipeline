@@ -20,6 +20,7 @@ from etl.schemas import (
     DIM_REGION_COLUMNS,
     FACT_FUNNEL_COLUMNS,
     FACT_SALES_COLUMNS,
+    StarSchemaContainer,
 )
 
 logger = logging.getLogger("GlobalShop_ETL")
@@ -31,6 +32,7 @@ try:
         BooleanType,
         DoubleType,
         IntegerType,
+        LongType,
         StringType,
         StructField,
         StructType,
@@ -137,32 +139,29 @@ class SparkETLEngine(BaseETLEngine):
 
         clean_count = online.count()
 
-        # 2. DimRegion (Deduplicated country mappings)
-        w_reg = Window.orderBy("Country")
+        # 2. DimRegion (Deduplicated country mappings - Distributed CRC32 BigInt Surrogate Key)
         dim_region = (
             online.select("Country")
             .distinct()
-            .withColumn("RegionKey", F.row_number().over(w_reg))
+            .withColumn("RegionKey", F.crc32(F.col("Country")).cast(LongType()))
             .select(DIM_REGION_COLUMNS)
         ).persist()
 
-        # 3. DimProduct (Preserve UnitPrice schema parity)
-        w_prod = Window.orderBy("StockCode")
+        # 3. DimProduct (Preserve UnitPrice schema parity - Distributed CRC32 BigInt Surrogate Key)
         dim_product = (
             online.groupBy("StockCode", "Description")
             .agg(F.round(F.mean("UnitPrice"), 4).alias("UnitPrice"))
             .dropDuplicates(["StockCode"])
-            .withColumn("ProductKey", F.row_number().over(w_prod))
+            .withColumn("ProductKey", F.crc32(F.col("StockCode")).cast(LongType()))
             .select(DIM_PRODUCT_COLUMNS)
         ).persist()
 
-        # 4. DimCustomer (Enforce referential integrity to DimRegion)
-        w_cust = Window.orderBy("CustomerID")
+        # 4. DimCustomer (Enforce referential integrity to DimRegion - Distributed CRC32 BigInt Surrogate Key)
         dim_customer = (
             online.select("CustomerID", "Country")
             .dropDuplicates(["CustomerID"])
             .join(dim_region.select("Country", "RegionKey"), on="Country", how="left")
-            .withColumn("CustomerKey", F.row_number().over(w_cust))
+            .withColumn("CustomerKey", F.crc32(F.col("CustomerID")).cast(LongType()))
             .select(DIM_CUSTOMER_COLUMNS)
         ).persist()
 
@@ -180,12 +179,15 @@ class SparkETLEngine(BaseETLEngine):
             .select(DIM_DATE_COLUMNS)
         )
 
-        # 6. FactSales (Distributed-Safe Surrogate Keys - NO Window.orderBy bottleneck!)
+        # 6. FactSales (Distributed-Safe Surrogate Keys - Decoupled RegionKey from DimCustomer)
         # Replaces single-partition Window with distributed cryptographic SHA256 key
+        # Directly joins DimRegion via transaction Country to prevent guest misattribution
         fact_sales = (
             online.join(dim_product.select("StockCode", "ProductKey"), on="StockCode", how="left")
-            .join(dim_customer.select("CustomerID", "CustomerKey", "RegionKey"), on="CustomerID", how="left")
+            .join(dim_customer.select("CustomerID", "CustomerKey"), on="CustomerID", how="left")
+            .join(dim_region.select("Country", "RegionKey"), on="Country", how="left")
             .withColumn("DateKey", F.date_format(F.col("Date"), "yyyyMMdd").cast(IntegerType()))
+            .withColumn("RegionKey", F.coalesce(F.col("RegionKey"), F.lit(-1)).cast(LongType()))
             .withColumn(
                 "SalesKey",
                 F.substring(
@@ -238,31 +240,33 @@ class SparkETLEngine(BaseETLEngine):
         else:
             fact_funnel = None
 
-        return {
-            "online": online,
-            "raw_count": raw_count,
-            "clean_count": clean_count,
-            "fact_sales": fact_sales,
-            "fact_funnel": fact_funnel,
-            "dim_product": dim_product,
-            "dim_customer": dim_customer,
-            "dim_date": dim_date,
-            "dim_region": dim_region,
-            "raw_orders": raw_data.get("raw_orders"),
-            "raw_events": raw_data.get("raw_events"),
-        }
+        return StarSchemaContainer(
+            fact_sales=fact_sales,
+            fact_funnel=fact_funnel,
+            dim_product=dim_product,
+            dim_customer=dim_customer,
+            dim_date=dim_date,
+            dim_region=dim_region,
+            clean_metrics={
+                "raw_records": raw_count,
+                "clean_records": clean_count,
+            },
+            cleaned_sales=online,
+            orders_clean=raw_data.get("raw_orders"),
+            events_clean=raw_data.get("raw_events"),
+        )
 
-    def load(self, star_schema: Dict[str, Any]) -> Dict[str, Any]:
+    def load(self, star_schema: StarSchemaContainer) -> Dict[str, Any]:
         output_dir = self.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        fact_sales = star_schema["fact_sales"]
-        fact_funnel = star_schema["fact_funnel"]
-        dim_product = star_schema["dim_product"]
-        dim_customer = star_schema["dim_customer"]
-        dim_date = star_schema["dim_date"]
-        dim_region = star_schema["dim_region"]
-        online = star_schema["online"]
+        fact_sales = star_schema.fact_sales
+        fact_funnel = star_schema.fact_funnel
+        dim_product = star_schema.dim_product
+        dim_customer = star_schema.dim_customer
+        dim_date = star_schema.dim_date
+        dim_region = star_schema.dim_region
+        online = star_schema.cleaned_sales
 
         # Persist FactSales (Partitioned by Year, Month and monolithic)
         fact_sales.write.partitionBy("Year", "Month").mode("overwrite").parquet(
@@ -275,7 +279,8 @@ class SparkETLEngine(BaseETLEngine):
         dim_customer.write.mode("overwrite").parquet(str(output_dir / "dim_customer.parquet"))
         dim_date.write.mode("overwrite").parquet(str(output_dir / "dim_date.parquet"))
         dim_region.write.mode("overwrite").parquet(str(output_dir / "dim_region.parquet"))
-        online.write.mode("overwrite").parquet(str(output_dir / "online_retail_clean.parquet"))
+        if online is not None:
+            online.write.mode("overwrite").parquet(str(output_dir / "online_retail_clean.parquet"))
 
         # Persist FactFunnel
         funnel_count = 0
@@ -284,23 +289,25 @@ class SparkETLEngine(BaseETLEngine):
             funnel_count = fact_funnel.count()
 
         # Clean auxiliary datasets
-        if star_schema.get("raw_orders") is not None:
-            star_schema["raw_orders"].write.mode("overwrite").parquet(
+        if star_schema.orders_clean is not None:
+            star_schema.orders_clean.write.mode("overwrite").parquet(
                 str(output_dir / "orders_clean.parquet")
             )
-        if star_schema.get("raw_events") is not None:
-            star_schema["raw_events"].write.mode("overwrite").parquet(
+        if star_schema.events_clean is not None:
+            star_schema.events_clean.write.mode("overwrite").parquet(
                 str(output_dir / "events_clean.parquet")
             )
 
+        raw_count = star_schema.clean_metrics.get("raw_records", 0)
+        clean_count = star_schema.clean_metrics.get("clean_records", 0)
         summary = {
             "pipeline_completed_at": datetime.now(timezone.utc).isoformat(),
             "engine": "pyspark",
-            "raw_records": star_schema["raw_count"],
-            "fact_sales_records": star_schema["clean_count"],
+            "raw_records": raw_count,
+            "fact_sales_records": clean_count,
             "fact_funnel_records": funnel_count,
             "retention_rate_pct": round(
-                (star_schema["clean_count"] / max(1, star_schema["raw_count"])) * 100, 2
+                (clean_count / max(1, raw_count)) * 100, 2
             ),
         }
 

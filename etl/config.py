@@ -10,8 +10,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "etl" / "output"
 DEFAULT_SQL_DIR = PROJECT_ROOT / "sql"

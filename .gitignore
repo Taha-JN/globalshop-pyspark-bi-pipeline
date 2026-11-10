@@ -1,3 +1,8 @@
+# Environments & Credentials
+.env
+.env.local
+*.pem
+
 # Python
 .venv/
 env/

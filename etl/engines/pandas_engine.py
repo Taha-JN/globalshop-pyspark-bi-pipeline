@@ -7,6 +7,7 @@ Star Schema Lakehouse ETL pipeline.
 import hashlib
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -22,6 +23,7 @@ from etl.schemas import (
     DIM_REGION_COLUMNS,
     FACT_FUNNEL_COLUMNS,
     FACT_SALES_COLUMNS,
+    StarSchemaContainer,
     UNKNOWN_CUSTOMER_ID,
 )
 
@@ -64,7 +66,7 @@ def clean_online_retail_pandas(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str
 
     # Missing customer imputation
     cleaned["CustomerID"] = cleaned["CustomerID"].astype(str).str.strip()
-    missing_cust = cleaned["CustomerID"].isin(["", "nan", "None", "null"])
+    missing_cust = cleaned["CustomerID"].isna() | cleaned["CustomerID"].isin(["", "nan", "None", "null"])
     metrics["missing_customers_imputed"] = int(missing_cust.sum())
     cleaned.loc[missing_cust, "CustomerID"] = UNKNOWN_CUSTOMER_ID
 
@@ -127,10 +129,6 @@ def build_fact_funnel_pandas(
     merged["Converted"] = merged["Transactions"] > 0
 
     # Deterministic distributed-safe surrogate key
-    def compute_funnel_key(row):
-        token = f"{row['VisitorID']}_{row['StockCode']}".encode("utf-8")
-        return hashlib.sha256(token).hexdigest()[:16]
-
     merged["FunnelKey"] = [
         hashlib.sha256(f"{v}_{s}".encode("utf-8")).hexdigest()[:16]
         for v, s in zip(merged["VisitorID"], merged["StockCode"])
@@ -143,7 +141,7 @@ def build_star_schema_pandas(
     cleaned_sales: pd.DataFrame,
     events_df: pd.DataFrame = None,
     orders_df: pd.DataFrame = None,
-) -> Dict[str, pd.DataFrame]:
+) -> StarSchemaContainer[pd.DataFrame]:
     """
     Construct Kimball Star Schema:
     - DimRegion (RegionKey PK, Country)
@@ -197,15 +195,19 @@ def build_star_schema_pandas(
     dim_date["Quarter"] = dim_date["Date"].dt.quarter
     dim_date = dim_date[DIM_DATE_COLUMNS]
 
-    # 5. FactSales (Join all surrogate keys including RegionKey)
+    # 5. FactSales (Decouple RegionKey from DimCustomer: join DimRegion via Country)
     fact_sales = (
         cleaned_sales.merge(
             dim_product[["StockCode", "ProductKey"]], on="StockCode", how="left"
         )
         .merge(
-            dim_customer[["CustomerID", "CustomerKey", "RegionKey"]], on="CustomerID", how="left"
+            dim_customer[["CustomerID", "CustomerKey"]], on="CustomerID", how="left"
+        )
+        .merge(
+            dim_region[["Country", "RegionKey"]], on="Country", how="left"
         )
     )
+    fact_sales["RegionKey"] = fact_sales["RegionKey"].fillna(-1).astype(int)
     fact_sales["DateKey"] = pd.to_datetime(fact_sales["Date"]).dt.strftime("%Y%m%d").astype(int)
 
     # Distributed-safe deterministic surrogate SalesKey (SHA256)
@@ -223,14 +225,14 @@ def build_star_schema_pandas(
     # 6. FactFunnel (Behavioral funnel modeling)
     fact_funnel = build_fact_funnel_pandas(events_df, dim_product)
 
-    return {
-        "FactSales": fact_sales,
-        "FactFunnel": fact_funnel,
-        "DimProduct": dim_product,
-        "DimCustomer": dim_customer,
-        "DimDate": dim_date,
-        "DimRegion": dim_region,
-    }
+    return StarSchemaContainer(
+        fact_sales=fact_sales,
+        fact_funnel=fact_funnel,
+        dim_product=dim_product,
+        dim_customer=dim_customer,
+        dim_date=dim_date,
+        dim_region=dim_region,
+    )
 
 
 class PandasETLEngine(BaseETLEngine):
@@ -262,7 +264,7 @@ class PandasETLEngine(BaseETLEngine):
             "raw_events": raw_events,
         }
 
-    def transform(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform(self, raw_data: Dict[str, Any]) -> StarSchemaContainer[pd.DataFrame]:
         logger.info("Cleaning raw retail records and validating data quality...")
         cleaned_retail, clean_metrics = clean_online_retail_pandas(raw_data["raw_retail"])
 
@@ -273,8 +275,8 @@ class PandasETLEngine(BaseETLEngine):
             orders_df=raw_data["raw_orders"],
         )
 
-        star_schema["clean_metrics"] = clean_metrics
-        star_schema["online_retail_clean"] = cleaned_retail
+        star_schema.clean_metrics = clean_metrics
+        star_schema.cleaned_sales = cleaned_retail
 
         # Clean auxiliary datasets for parity
         if raw_data["raw_orders"] is not None:
@@ -282,73 +284,89 @@ class PandasETLEngine(BaseETLEngine):
             orders["order_purchase_timestamp"] = pd.to_datetime(
                 orders["order_purchase_timestamp"], errors="coerce"
             )
-            star_schema["orders_clean"] = orders
+            star_schema.orders_clean = orders
 
         if raw_data["raw_events"] is not None:
             events = raw_data["raw_events"].copy()
             events["timestamp"] = pd.to_datetime(events["timestamp"], errors="coerce")
-            star_schema["events_clean"] = events
+            star_schema.events_clean = events
 
         return star_schema
 
-    def load(self, star_schema: Dict[str, Any]) -> Dict[str, Any]:
+    def load(self, star_schema: StarSchemaContainer[pd.DataFrame]) -> Dict[str, Any]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        fact_sales = star_schema["FactSales"]
-        fact_funnel = star_schema["FactFunnel"]
+        fact_sales = star_schema.fact_sales
+        fact_funnel = star_schema.fact_funnel
 
-        # Persist FactSales (Partitioned Lakehouse & Flat)
+        # Persist FactSales (Partitioned Lakehouse & Flat) using Atomic Directory Swap
         fact_out = self.output_dir / "fact_sales"
-        if fact_out.exists():
-            import shutil
-            shutil.rmtree(fact_out)
-        fact_out.mkdir(parents=True, exist_ok=True)
-        logger.info("Persisting FactSales partitioned by (Year, Month) to %s", fact_out)
+        staging_out = self.output_dir / ".staging_fact_sales"
+        backup_out = self.output_dir / ".backup_fact_sales"
+
+        if staging_out.exists():
+            shutil.rmtree(staging_out)
+        staging_out.mkdir(parents=True, exist_ok=True)
+
+        logger.info("Persisting FactSales partitioned by (Year, Month) via atomic staging to %s", fact_out)
         fact_sales.to_parquet(self.output_dir / "fact_sales.parquet", index=False)
-        fact_sales.to_parquet(fact_out, partition_cols=["Year", "Month"], index=False)
+        fact_sales.to_parquet(staging_out, partition_cols=["Year", "Month"], index=False)
+
+        # Atomic directory swap: guarantees zero data loss if process crashes mid-write
+        if fact_out.exists():
+            if backup_out.exists():
+                shutil.rmtree(backup_out)
+            fact_out.rename(backup_out)
+            staging_out.rename(fact_out)
+            shutil.rmtree(backup_out)
+        else:
+            staging_out.rename(fact_out)
 
         # Persist FactFunnel
         funnel_file = self.output_dir / "fact_funnel.parquet"
-        fact_funnel.to_parquet(funnel_file, index=False)
-        logger.info("Persisted FactFunnel (%d rows) to %s", len(fact_funnel), funnel_file)
+        if fact_funnel is not None:
+            fact_funnel.to_parquet(funnel_file, index=False)
+            logger.info("Persisted FactFunnel (%d rows) to %s", len(fact_funnel), funnel_file)
 
         # Persist Dimension Tables
         dim_mappings = {
-            "DimProduct": "dim_product.parquet",
-            "DimCustomer": "dim_customer.parquet",
-            "DimDate": "dim_date.parquet",
-            "DimRegion": "dim_region.parquet",
+            "DimProduct": (star_schema.dim_product, "dim_product.parquet"),
+            "DimCustomer": (star_schema.dim_customer, "dim_customer.parquet"),
+            "DimDate": (star_schema.dim_date, "dim_date.parquet"),
+            "DimRegion": (star_schema.dim_region, "dim_region.parquet"),
         }
-        for dim_name, filename in dim_mappings.items():
+        for dim_name, (dim_df, filename) in dim_mappings.items():
             dim_file = self.output_dir / filename
-            star_schema[dim_name].to_parquet(dim_file, index=False)
-            logger.info("Persisted %s (%d rows) to %s", dim_name, len(star_schema[dim_name]), dim_file)
+            dim_df.to_parquet(dim_file, index=False)
+            logger.info("Persisted %s (%d rows) to %s", dim_name, len(dim_df), dim_file)
 
         # Cleaned flat datasets
-        star_schema["online_retail_clean"].to_parquet(
-            self.output_dir / "online_retail_clean.parquet", index=False
-        )
-        if "orders_clean" in star_schema:
-            star_schema["orders_clean"].to_parquet(
+        if star_schema.cleaned_sales is not None:
+            star_schema.cleaned_sales.to_parquet(
+                self.output_dir / "online_retail_clean.parquet", index=False
+            )
+        if star_schema.orders_clean is not None:
+            star_schema.orders_clean.to_parquet(
                 self.output_dir / "orders_clean.parquet", index=False
             )
-        if "events_clean" in star_schema:
-            star_schema["events_clean"].to_parquet(
+        if star_schema.events_clean is not None:
+            star_schema.events_clean.to_parquet(
                 self.output_dir / "events_clean.parquet", index=False
             )
 
         # Audit Summary
-        clean_metrics = star_schema["clean_metrics"]
+        clean_metrics = star_schema.clean_metrics
+        funnel_rows = len(fact_funnel) if fact_funnel is not None else 0
         summary = {
             "pipeline_completed_at": datetime.now(timezone.utc).isoformat(),
             "engine": "pandas",
             "clean_metrics": clean_metrics,
             "star_schema_counts": {
                 "fact_sales_rows": len(fact_sales),
-                "fact_funnel_rows": len(fact_funnel),
-                "dim_product_rows": len(star_schema["DimProduct"]),
-                "dim_customer_rows": len(star_schema["DimCustomer"]),
-                "dim_date_rows": len(star_schema["DimDate"]),
-                "dim_region_rows": len(star_schema["DimRegion"]),
+                "fact_funnel_rows": funnel_rows,
+                "dim_product_rows": len(star_schema.dim_product),
+                "dim_customer_rows": len(star_schema.dim_customer),
+                "dim_date_rows": len(star_schema.dim_date),
+                "dim_region_rows": len(star_schema.dim_region),
             },
             "retention_rate_pct": round(
                 (len(fact_sales) / max(1, clean_metrics["raw_records"])) * 100, 2

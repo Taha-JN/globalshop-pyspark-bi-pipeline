@@ -23,6 +23,7 @@ from etl.schemas import (
     DIM_REGION_COLUMNS,
     FACT_FUNNEL_COLUMNS,
     FACT_SALES_COLUMNS,
+    StarSchemaContainer,
 )
 
 
@@ -197,3 +198,69 @@ def test_duckdb_olap_query_execution(tmp_path, sample_raw_retail_df, sample_even
     assert not res.empty
     assert "rev" in res.columns
     assert "Country" in res.columns
+
+
+def test_star_schema_container_lsp_contract(sample_raw_retail_df, sample_events_df):
+    """Ensure build_star_schema returns StarSchemaContainer with typed attributes & dict compatibility."""
+    cleaned, _ = clean_online_retail_pandas(sample_raw_retail_df)
+    container = build_star_schema_pandas(cleaned, events_df=sample_events_df)
+
+    assert isinstance(container, StarSchemaContainer)
+    # Typed attribute access
+    assert isinstance(container.fact_sales, pd.DataFrame)
+    assert isinstance(container.fact_funnel, pd.DataFrame)
+    assert isinstance(container.dim_product, pd.DataFrame)
+    assert isinstance(container.dim_customer, pd.DataFrame)
+    assert isinstance(container.dim_date, pd.DataFrame)
+    assert isinstance(container.dim_region, pd.DataFrame)
+
+    # Subscripting access (backwards compatibility)
+    assert container["FactSales"].equals(container.fact_sales)
+    assert container["fact_sales"].equals(container.fact_sales)
+    assert container["DimRegion"].equals(container.dim_region)
+
+
+def test_guest_region_mapping_decoupled():
+    """
+    Ensure multiple GUEST transactions from distinct countries map
+    directly to their corresponding DimRegion RegionKey, preventing silent data poisoning.
+    """
+    multi_guest_df = pd.DataFrame({
+        "InvoiceNo": ["INV2001", "INV2002", "INV2003", "INV2004"],
+        "StockCode": ["P001", "P001", "P002", "P003"],
+        "Description": ["Mug", "Mug", "Plate", "Bowl"],
+        "Quantity": [1, 2, 3, 4],
+        "InvoiceDate": [
+            "2023-09-01 10:00:00",
+            "2023-09-01 11:00:00",
+            "2023-09-02 12:00:00",
+            "2023-09-03 14:00:00",
+        ],
+        "UnitPrice": [10.0, 10.0, 15.0, 20.0],
+        "CustomerID": ["", None, "nan", ""],  # All 4 are GUEST transactions
+        "Country": ["France", "Germany", "United Kingdom", "United States"],
+    })
+
+    cleaned, metrics = clean_online_retail_pandas(multi_guest_df)
+    assert metrics["missing_customers_imputed"] == 4
+    assert (cleaned["CustomerID"] == "GUEST").all()
+
+    container = build_star_schema_pandas(cleaned)
+    assert isinstance(container, StarSchemaContainer)
+
+    fact = container.fact_sales
+    dim_reg = container.dim_region
+
+    # Merge FactSales with DimRegion on RegionKey
+    merged = fact.merge(dim_reg, on="RegionKey", suffixes=("_fact", "_dim"))
+
+    # Assert each invoice's resolved DimRegion Country matches its original invoice Country
+    expected_country_map = dict(zip(multi_guest_df["InvoiceNo"], multi_guest_df["Country"]))
+    for _, row in merged.iterrows():
+        inv = row["InvoiceNo"]
+        expected_country = expected_country_map[inv]
+        assert row["Country"] == expected_country, (
+            f"Data corruption detected: Invoice {inv} originated in {expected_country} "
+            f"but was incorrectly attributed to {row['Country']} in DimRegion!"
+        )
+

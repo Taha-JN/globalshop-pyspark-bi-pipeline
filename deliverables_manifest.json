@@ -1,5 +1,5 @@
 {
-  "manifest_generated_at": "2026-11-10T10:43:49.017330+00:00",
+  "manifest_generated_at": "2026-11-10T11:47:27.730717+00:00",
   "files_count": 40,
   "files": [
     {
@@ -9,8 +9,8 @@
     },
     {
       "path": ".gitignore",
-      "sha256": "7095669ce1d7628e67d5abf1fca6f35c17a8411ba90d7b3c8de3abc84bda51b6",
-      "size_bytes": 309
+      "sha256": "b2589a3312ed433220f4401b44c54e6df32d90d5db3f07f4ff12847b486523bc",
+      "size_bytes": 361
     },
     {
       "path": "analysis/analysis.py",
@@ -49,8 +49,8 @@
     },
     {
       "path": "etl/config.py",
-      "sha256": "6df47b7eb644a7418b28aa738be28a2b5b467e962b0b7c2ab4202bbef5702084",
-      "size_bytes": 1984
+      "sha256": "171df3afe998e6bb7d23460757dcfc65effcaee549c798e07799b715f58c78b8",
+      "size_bytes": 2050
     },
     {
       "path": "etl/engines/__init__.py",
@@ -59,18 +59,18 @@
     },
     {
       "path": "etl/engines/base.py",
-      "sha256": "dc2b18ff845047bf441a982754e2490ef5f8c949c38bf5cf409547dfbb5d5b72",
-      "size_bytes": 1217
+      "sha256": "e27c0e75d431d29ac7d8e20973a4bf5268159f1726b44a9f59279d065f9edf69",
+      "size_bytes": 1272
     },
     {
       "path": "etl/engines/pandas_engine.py",
-      "sha256": "8f966190ce43ae85b7057bff6a3c2630c8ad24d78d6f7315913c371dd377812b",
-      "size_bytes": 14553
+      "sha256": "2f3ddd0cfe5f097f744aacb40ba0a739fb7cc51792406d2d87913951b263d55e",
+      "size_bytes": 15455
     },
     {
       "path": "etl/engines/spark_engine.py",
-      "sha256": "3fb95fc29770264ea2d2f45f70ac769f9dcfbb31fa4e409f89113a9ac4b024e8",
-      "size_bytes": 12543
+      "sha256": "a05d728ae993ffd916d7bce2e108f9792a6b1d9a19e825e0d4a701b9a738df64",
+      "size_bytes": 13048
     },
     {
       "path": "etl/etl_flow_diagram.txt",
@@ -94,8 +94,8 @@
     },
     {
       "path": "etl/schemas.py",
-      "sha256": "bfe51d186858423dd1665c0124d7ebe9bcb3e4e287df6654cc90631f88710146",
-      "size_bytes": 1244
+      "sha256": "4664315b927da7fb632340ff08648d073542b7bde894d71396c8b9eec31f5d63",
+      "size_bytes": 3493
     },
     {
       "path": "powerbi/powerbi_instructions.md",
@@ -119,8 +119,8 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "2d44256c2a9456ab14752a8444e9c71a87c3bbbd59ad524c047e987121a5a417",
-      "size_bytes": 302
+      "sha256": "cbfe0da3743c6b2553d6ba26f9992d9763ba6974b39d7e7dffc614c97233e780",
+      "size_bytes": 323
     },
     {
       "path": "sql/create_schema.sql",
@@ -129,8 +129,8 @@
     },
     {
       "path": "sql/queries/outputs/q1_top_products_by_revenue.csv",
-      "sha256": "e9bfc0d9317acf057d7c6603cd5c8268347b44b81a48aa97cabd42b2f3568305",
-      "size_bytes": 505
+      "sha256": "137acf0eec73d249057d7e73624942bd84ee979646233c476e9dc7b63b4525c4",
+      "size_bytes": 515
     },
     {
       "path": "sql/queries/outputs/q2_monthly_sales_trend.csv",
@@ -139,18 +139,18 @@
     },
     {
       "path": "sql/queries/outputs/q3_customer_segmentation.csv",
-      "sha256": "cc631fb1f3983f9432e7c392a477ca4759fcc8019fb800f2ae88189f1126d89a",
+      "sha256": "c12003b437a78464c464672eae720e29ce6eab0b9f11b3777bfeae07219a98a4",
       "size_bytes": 5592
     },
     {
       "path": "sql/queries/outputs/q4_peak_hours.csv",
-      "sha256": "5f74b9276d1c3aa2c723444607f7b81d769242e7c41c33d18cb4c95633de34f2",
-      "size_bytes": 552
+      "sha256": "57574705aba7eb9b0f5bafad9565605e24f8c97c24f5c87941183a378d6fc618",
+      "size_bytes": 473
     },
     {
       "path": "sql/queries/outputs/q5_country_profitability.csv",
-      "sha256": "45885b051acbd2b8ec6edd06cbf364d44bdcc1b86d28b4dc82be71c8c04d5002",
-      "size_bytes": 436
+      "sha256": "872124b82face57d306b2ee7b911067269a30bc25d1695d399f2ba16c739844f",
+      "size_bytes": 467
     },
     {
       "path": "sql/queries/q1_top_products_by_revenue.sql",
@@ -194,8 +194,8 @@
     },
     {
       "path": "tests/test_etl.py",
-      "sha256": "ff5fb072ed4b6cce685be5a1694770ffd46d507348bfea3de06fc2dcce43dd36",
-      "size_bytes": 8020
+      "sha256": "2d60113816b71d5beb6ff228ff3727149e82caad141efb6544282deed3f6f93e",
+      "size_bytes": 10924
     },
     {
       "path": "tools/generate_manifest.py",

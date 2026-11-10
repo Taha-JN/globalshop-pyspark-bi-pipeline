@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict
 
+from etl.schemas import StarSchemaContainer
+
 
 class BaseETLEngine(ABC):
     """Abstract base class for data transformation engines (Spark, Pandas)."""
@@ -21,12 +23,12 @@ class BaseETLEngine(ABC):
         pass
 
     @abstractmethod
-    def transform(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform(self, raw_data: Dict[str, Any]) -> StarSchemaContainer:
         """Apply data quality cleaning and build Kimball Star Schema entities."""
         pass
 
     @abstractmethod
-    def load(self, star_schema: Dict[str, Any]) -> Dict[str, Any]:
+    def load(self, star_schema: StarSchemaContainer) -> Dict[str, Any]:
         """Persist star schema entities to partitioned Parquet and record audit summary."""
         pass
 
