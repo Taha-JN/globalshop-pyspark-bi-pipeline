@@ -1,0 +1,29 @@
+# Python
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pipeline Data & Artifacts
+data/*.csv
+!data/sample_1k_online_retail.csv
+etl/output/
+analysis/output/
+*.parquet
+*.log
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

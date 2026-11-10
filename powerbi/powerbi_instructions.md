@@ -1,20 +1,32 @@
 # Power BI Recreation Instructions
 
-Use the Parquet/CSV files in `etl/output/` as data sources.
+## Data Ingestion
+Use the Star Schema Parquet tables in `etl/output/` as your primary data sources.
 
-Steps:
-1. Open Power BI Desktop. Get Data -> Folder (or Parquet/CSV individually). Point to `etl/output/`.
-2. Load `online_retail_clean.parquet`, `orders_clean.parquet`, and `events_clean.parquet`.
-3. Create relationships in the model view similar to `ssas/ssas_tabular_model_description.md`.
-4. Create measures using the DAX provided in `ssas/measures.dax`.
+### Steps:
+1. Open Power BI Desktop. Click **Get Data** -> **Folder** (or choose **Parquet** individually) pointing to `etl/output/`.
+2. Load the Star Schema Lakehouse tables:
+   - `fact_sales` (or `fact_sales.parquet`)
+   - `fact_funnel.parquet`
+   - `dim_product.parquet`
+   - `dim_customer.parquet`
+   - `dim_date.parquet`
+   - `dim_region.parquet`
+3. In Model View, configure star schema relationships:
+   - `FactSales[ProductKey]` -> `DimProduct[ProductKey]` (Many to One)
+   - `FactSales[CustomerKey]` -> `DimCustomer[CustomerKey]` (Many to One)
+   - `FactSales[DateKey]` -> `DimDate[DateKey]` (Many to One)
+   - `FactSales[RegionKey]` -> `DimRegion[RegionKey]` (Many to One)
+   - `DimCustomer[RegionKey]` -> `DimRegion[RegionKey]` (Many to One)
+   - `FactFunnel[ProductKey]` -> `DimProduct[ProductKey]` (Many to One)
+4. Add the DAX measures defined in `ssas/measures.dax` to a dedicated `_Measures` table.
 
-Suggested visuals:
-- KPI card: Total Sales, Avg Order Value, Returning Customer Rate.
-- Line chart: Monthly Sales Trend (month on axis, Total Sales as value).
-- Bar chart: Top 10 Products by Revenue.
-- Map or stacked bar: Sales by Country.
-- Donut: Customer segments.
+### Suggested Visuals:
+- **Executive KPI Cards**: Total Sales, Avg Order Value, Funnel Conversion Rate, Returning Customer Rate.
+- **Line Chart**: Monthly Sales Trend (axis: `DimDate[FullDate]` or `Month`, values: `[Total Sales]`).
+- **Bar Chart**: Top 10 Products by Revenue (`DimProduct[Description]`, values: `[Total Sales]`).
+- **Map / Regional Bar**: Sales by Country (`DimRegion[Country]`, values: `[Total Sales]`).
+- **Donut Chart**: Customer Segmentation breakdown (`q3_customer_segmentation.csv`).
+- **Funnel Chart**: Behavioral Funnel (`FactFunnel[Views]` -> `FactFunnel[AddToCart]` -> `FactFunnel[Transactions]`).
 
-Filters/slicers: Date range (OrderDate), Country, Channel, Product Category (if available).
-
-Mock visuals: use images from `analysis/output/` as placeholders.
+Visual placeholders and reference charts are saved in `analysis/output/`.

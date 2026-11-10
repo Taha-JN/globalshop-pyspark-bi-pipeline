@@ -1,31 +1,49 @@
 # SSAS Tabular Model Description
 
-Tables:
-- FactSales (SalesKey PK) - measures: Total Sales, Orders, Avg Order Value
-- DimProduct (ProductKey PK)
-- DimCustomer (CustomerKey PK)
-- DimDate (DateKey PK)
-- DimRegion (RegionKey PK)
+## Kimball Star Schema Architecture
 
-Relationships:
-- FactSales[ProductKey] -> DimProduct[ProductKey]
-- FactSales[CustomerKey] -> DimCustomer[CustomerKey]
-- FactSales[DateKey] -> DimDate[DateKey]
-- DimCustomer[Country] -> DimRegion[Country]
+### Tables:
+- **FactSales** (`SalesKey` PK)
+  - Foreign Keys: `ProductKey`, `CustomerKey`, `DateKey`, `RegionKey`
+  - Measures: `TotalPrice`, `Quantity`, `UnitPrice`
+- **FactFunnel** (`FunnelKey` PK)
+  - Foreign Keys: `ProductKey`
+  - Attributes: `VisitorID`, `StockCode`, `Views`, `AddToCart`, `Transactions`, `Converted`
+- **DimProduct** (`ProductKey` PK)
+  - Attributes: `StockCode`, `Description`, `UnitPrice`
+- **DimCustomer** (`CustomerKey` PK)
+  - Attributes: `CustomerID`, `Country`, `RegionKey`
+- **DimDate** (`DateKey` PK)
+  - Attributes: `FullDate`, `Year`, `Month`, `Day`, `DayOfWeek`, `Quarter`
+- **DimRegion** (`RegionKey` PK)
+  - Attributes: `Country`
 
-Sample DAX measures:
+### Relationships:
+- `FactSales[ProductKey]` (Many) -> `DimProduct[ProductKey]` (One)
+- `FactSales[CustomerKey]` (Many) -> `DimCustomer[CustomerKey]` (One)
+- `FactSales[DateKey]` (Many) -> `DimDate[DateKey]` (One)
+- `FactSales[RegionKey]` (Many) -> `DimRegion[RegionKey]` (One)
+- `DimCustomer[RegionKey]` (Many) -> `DimRegion[RegionKey]` (One)
+- `FactFunnel[ProductKey]` (Many) -> `DimProduct[ProductKey]` (One)
 
--- Total Sales
+### Production DAX Measures:
+
+```dax
 Total Sales = SUM(FactSales[TotalPrice])
 
--- Avg Order Value
 AvgOrderValue = DIVIDE([Total Sales], DISTINCTCOUNT(FactSales[InvoiceNo]))
 
--- Profit Margin (synthetic example)
 ProfitMargin = DIVIDE([Total Sales] - SUM(FactSales[UnitPrice] * FactSales[Quantity] * 0.6), [Total Sales])
 
--- Conversion Rate (events -> transactions)
-ConversionRate = DIVIDE(CALCULATE(COUNTROWS(FactSales), FactSales[Channel] = "web"), CALCULATE(COUNTROWS('retailrocket_events'), 'retailrocket_events'[event_type] = "view"))
+FunnelConversionRate = DIVIDE(SUM(FactFunnel[Transactions]), SUM(FactFunnel[Views]))
 
--- Returning Customer Rate
-ReturningCustomerRate = DIVIDE(CALCULATE(DISTINCTCOUNT(FactSales[CustomerKey]), FILTER(FactSales, [orders_count] > 1)), DISTINCTCOUNT(FactSales[CustomerKey]))
+VisitorConversionRate = DIVIDE(CALCULATE(COUNTROWS(FactFunnel), FactFunnel[Converted] = TRUE), COUNTROWS(FactFunnel))
+
+ReturningCustomerRate = DIVIDE(
+    CALCULATE(
+        DISTINCTCOUNT(FactSales[CustomerKey]),
+        FILTER(ALL(FactSales), FactSales[CustomerKey] IN VALUES(FactSales[CustomerKey]) AND CALCULATE(COUNTROWS(FactSales)) > 1)
+    ),
+    DISTINCTCOUNT(FactSales[CustomerKey])
+)
+```

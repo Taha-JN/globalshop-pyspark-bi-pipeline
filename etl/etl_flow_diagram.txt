@@ -1,13 +1,43 @@
-ETL Flow (textual / mermaid-style)
+GlobalShop Enterprise ETL & Star Schema Architecture
 
 ```mermaid
 flowchart TD
-  A[Raw CSVs in data/] --> B[Extract]
-  B --> C[Clean: cast types, remove nulls, fix timestamps]
-  C --> D[Deduplicate & Enrich: TotalPrice, OrderMonth, Channel]
-  D --> E[Write Parquet to etl/output/]
-  E --> F[Load into Data Warehouse (SQL), create star schema]
-  F --> G[Analysis & Dashboards]
+    subgraph Raw Data Ingestion
+        A1[online_retail_ii.csv] --> B1[Extract & Schema Enforcement]
+        A2[olist_orders.csv] --> B2[Extract & Regional Mapping]
+        A3[retailrocket_events.csv] --> B3[Extract & Event Funnel Extraction]
+    end
+
+    subgraph Data Harmonization & Quality
+        B1 --> C1[Clean: Cast numeric types, filter returns/Quantity<=0, drop UnitPrice<=0]
+        C1 --> C2[Standardize: Normalize timestamps to UTC InvoiceTimestamp]
+        C2 --> C3[Deduplicate: Drop redundant invoice-item events]
+        C3 --> C4[Impute: Map unassigned CustomerID to GUEST]
+    end
+
+    subgraph Kimball Star Schema Modeling
+        C4 --> D1[DimProduct: Unique StockCode, Description, UnitPrice, surrogate ProductKey]
+        C4 --> D2[DimRegion: Country mappings, surrogate RegionKey]
+        C4 & D2 --> D3[DimCustomer: Unique CustomerID, Country, surrogate CustomerKey, RegionKey FK]
+        C4 --> D4[DimDate: Distinct dates, DateKey YYYYMMDD, Year, Month, Day, DayOfWeek, Quarter]
+        C4 & D1 & D3 & D4 & D2 --> D5[FactSales: Distributed SHA256 SalesKey, ProductKey, CustomerKey, DateKey, RegionKey, measures]
+        B3 & D1 --> D6[FactFunnel: Distributed FunnelKey, VisitorID, StockCode, ProductKey, Views, AddToCart, Transactions, Converted]
+    end
+
+    subgraph Storage & Analytics
+        D5 --> E1[Partitioned Parquet by Year, Month: etl/output/fact_sales]
+        D6 --> E2[Parquet Funnel Table: etl/output/fact_funnel.parquet]
+        D1 & D2 & D3 & D4 --> E3[Parquet Dimension Tables: etl/output/dim_*.parquet]
+        E1 & E2 & E3 --> F[DuckDB In-Memory OLAP Queries & Executive BI Dashboards]
+    end
 ```
 
-Metrics logged: initial_row_count, after_cleaning, after_dedup, null_customer_count, records_with_negative_quantity
+Audited Metrics:
+- raw_records
+- negative_or_zero_qty_dropped
+- zero_unit_price_dropped
+- missing_customers_imputed
+- duplicates_dropped
+- clean_records
+- star_schema_counts (FactSales, FactFunnel, DimProduct, DimCustomer, DimDate, DimRegion)
+- retention_rate_pct

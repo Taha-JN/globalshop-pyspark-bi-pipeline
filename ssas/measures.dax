@@ -1,5 +1,5 @@
 // measures.dax
-// Paste these into a Tabular model or Power BI measures
+// Production DAX measures for GlobalShop SSAS Tabular Model & Power BI
 
 Total Sales = SUM(FactSales[TotalPrice])
 
@@ -7,6 +7,8 @@ AvgOrderValue = DIVIDE([Total Sales], DISTINCTCOUNT(FactSales[InvoiceNo]))
 
 ProfitMargin = DIVIDE([Total Sales] - SUM(FactSales[UnitPrice] * FactSales[Quantity] * 0.6), [Total Sales])
 
-ConversionRate = DIVIDE(CALCULATE(COUNTROWS(FactSales), FactSales[Channel] = "web"), CALCULATE(COUNTROWS('retailrocket_events'), 'retailrocket_events'[event_type] = "view"))
+FunnelConversionRate = DIVIDE(SUM(FactFunnel[Transactions]), SUM(FactFunnel[Views]))
+
+VisitorConversionRate = DIVIDE(CALCULATE(COUNTROWS(FactFunnel), FactFunnel[Converted] = TRUE), COUNTROWS(FactFunnel))
 
 ReturningCustomerRate = DIVIDE(CALCULATE(DISTINCTCOUNT(FactSales[CustomerKey]), FILTER(ALL(FactSales), FactSales[CustomerKey] IN VALUES(FactSales[CustomerKey]) AND CALCULATE(COUNTROWS(FactSales)) > 1)), DISTINCTCOUNT(FactSales[CustomerKey]))
