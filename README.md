@@ -4,7 +4,7 @@ An end-to-end, reproducible Big Data analytics lakehouse pipeline for **GlobalSh
 
 ---
 
-## 🏗️ Architectural Overview
+## Architectural Overview
 
 ```mermaid
 flowchart LR
@@ -62,7 +62,7 @@ flowchart LR
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 05_globalshop-bigdata-pipeline/
@@ -113,7 +113,7 @@ flowchart LR
 
 ---
 
-## ⚡ Quick Setup
+## Quick Setup
 
 ### 1. Environment Initialization
 
@@ -169,7 +169,7 @@ pytest -v
 
 ---
 
-## 🛡️ Data Quality & Auditing
+## Data Quality & Auditing
 
 Every ETL execution logs detailed auditing metrics to `etl/output/etl.log` and `etl/output/summary.json`, tracking:
 * Raw records ingested vs. clean records retained
