@@ -133,7 +133,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Execution Workflow (End-to-End)
+## Execution Workflow (End-to-End)
 
 All scripts utilize dynamic path resolution (`pathlib.Path`) and can be executed from any working directory.
 
