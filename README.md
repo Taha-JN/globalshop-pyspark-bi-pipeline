@@ -7,6 +7,7 @@ An end-to-end, reproducible Big Data analytics lakehouse pipeline for **GlobalSh
 ## Architectural Overview
 
 
+
 ```mermaid
 flowchart LR
     subgraph Ingestion [Multi-Source Ingestion]
