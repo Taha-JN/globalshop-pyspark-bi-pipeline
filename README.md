@@ -3,7 +3,6 @@
 An end-to-end, reproducible Big Data analytics lakehouse pipeline for **GlobalShop Inc.**, a global omnichannel e-commerce enterprise. The pipeline ingests multi-source transactional and behavioral clickstream datasets, executes distributed data cleansing and validation, models the lakehouse into a **Kimball Star Schema** (`FactSales`, `FactFunnel`, and four dimension tables), writes partitioned Parquet tables, executes authentic analytical SQL queries using an in-process **DuckDB OLAP engine**, and powers executive business intelligence dashboards.
 
 ---
-
 ## Architectural Overview
 
 
